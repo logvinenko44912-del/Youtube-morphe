@@ -13,7 +13,7 @@ if [ "${1-}" = "clean" ]; then
 fi
 
 jq --version >/dev/null || abort "\`jq\` is not installed. install it with 'apt install jq' or equivalent"
-java --version >/dev/null || abort "\`openjdk 17\` is not installed. install it with 'apt install openjdk-17-jre' or equivalent"
+java --version >/dev/null || abort "\`java\` is not installed. install it with 'apt install openjdk-21-jre' or equivalent"
 zip --version >/dev/null || abort "\`zip\` is not installed. install it with 'apt install zip' or equivalent"
 
 set_prebuilts
@@ -27,6 +27,7 @@ COMPRESSION_LEVEL=$(toml_get "$main_config_t" compression-level) || COMPRESSION_
 if ! PARALLEL_JOBS=$(toml_get "$main_config_t" parallel-jobs); then
 	if [ "$OS" = Android ]; then PARALLEL_JOBS=1; else PARALLEL_JOBS=$(nproc); fi
 fi
+PARALLEL_JOBS=1 # TODO: multiple jobs were broken by recent cli versions. and i cant bother to fix it so instead, i disable it.
 REMOVE_RV_INTEGRATIONS_CHECKS=$(toml_get "$main_config_t" remove-rv-integrations-checks) || REMOVE_RV_INTEGRATIONS_CHECKS="true"
 DEF_PATCHES_VER=$(toml_get "$main_config_t" patches-version) || DEF_PATCHES_VER="latest"
 DEF_CLI_VER=$(toml_get "$main_config_t" cli-version) || DEF_CLI_VER="latest"
@@ -41,11 +42,6 @@ if [ "${2-}" = "--config-update" ]; then
 fi
 
 : >build.md
-ENABLE_MODULE_UPDATE=$(toml_get "$main_config_t" enable-module-update) || ENABLE_MODULE_UPDATE=true
-if [ "$ENABLE_MODULE_UPDATE" = true ] && [ -z "${GITHUB_REPOSITORY-}" ]; then
-	pr "You are building locally. Module updates will not be enabled."
-	ENABLE_MODULE_UPDATE=false
-fi
 if ((COMPRESSION_LEVEL > 9)) || ((COMPRESSION_LEVEL < 0)); then abort "compression-level must be within 0-9"; fi
 
 rm -rf module/bin/*/tmp.*
@@ -71,7 +67,7 @@ for table_name in $(toml_get_table_names); do
 		idx=$((idx - 1))
 	fi
 
-	declare -A app_args
+	declare -A app_args=()
 	patches_src=$(toml_get "$t" patches-source) || patches_src=$DEF_PATCHES_SRC
 	patches_ver=$(toml_get "$t" patches-version) || patches_ver=$DEF_PATCHES_VER
 	cli_src=$(toml_get "$t" cli-source) || cli_src=$DEF_CLI_SRC
@@ -81,10 +77,11 @@ for table_name in $(toml_get_table_names); do
 		epr "Could not get prebuilts"
 		continue
 	fi
-	read -r cli_jar patches_jar <<<"$PREBUILTS"
+	read -r patches_jar cli_jar <<<"$PREBUILTS"
 	app_args[cli]=$cli_jar
 	app_args[ptjar]=$patches_jar
 	app_args[rv_brand]=$(toml_get "$t" rv-brand) || app_args[rv_brand]=$DEF_RV_BRAND
+	app_args[enable_update_checks]=$(toml_get "$t" enable-update-checks) && vtf "${app_args[enable_update_checks]}" "enable-update-checks" || app_args[enable_update_checks]="false"
 
 	app_args[excluded_patches]=$(toml_get "$t" excluded-patches) || app_args[excluded_patches]=""
 	if [ -n "${app_args[excluded_patches]}" ] && [[ ${app_args[excluded_patches]} != *'"'* ]]; then abort "patch names inside excluded-patches must be quoted"; fi
@@ -155,13 +152,10 @@ for table_name in $(toml_get_table_names); do
 	fi
 done
 wait
-rm -rf temp/tmp.*
+_clean_tmp
 if [ -z "$(ls -A1 "${BUILD_DIR}")" ]; then abort "All builds failed."; fi
 
-log "\nInstall [Microg](https://github.com/ReVanced/GmsCore/releases) for non-root YouTube and YT Music APKs"
-log "Use [zygisk-detach](https://github.com/j-hc/zygisk-detach) to detach YouTube and YT Music modules from Play Store"
-log "\n[revanced-magisk-module](https://github.com/j-hc/revanced-magisk-module)\n"
-log "$(cat "$TEMP_DIR"/*/changelog.md)"
+log "\nInstall [Microg](https://github.com/MorpheApp/MicroG-RE/releases/download/7.2.1/microg-7.2.1.apk) for non-root YouTube, YT Music and Google Photos APKs"
 
 SKIPPED=$(cat "$TEMP_DIR"/skipped 2>/dev/null || :)
 if [ -n "$SKIPPED" ]; then
